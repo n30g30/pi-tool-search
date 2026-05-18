@@ -17,7 +17,7 @@
 
 import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -25,21 +25,60 @@ const CORE_TOOLS = ["read", "write", "edit", "bash", "grep", "find"];
 
 interface UserConfig {
   alwaysEnabled: string[];
+  isQuietStartup: boolean;
   showToolSearchFooterStatus: boolean;
 }
 
-function readUserConfig(): UserConfig {
+type Settings = Record<string, unknown>;
+
+function isSettings(value: unknown): value is Settings {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeSettings(base: Settings, override: Settings): Settings {
+  const merged: Settings = { ...base };
+
+  for (const [key, value] of Object.entries(override)) {
+    const current = merged[key];
+    if (isSettings(current) && isSettings(value)) {
+      merged[key] = mergeSettings(current, value);
+      continue;
+    }
+
+    merged[key] = value;
+  }
+
+  return merged;
+}
+
+function readSettingsFile(path: string): Settings {
   try {
-    const raw = readFileSync(join(getAgentDir(), "settings.json"), "utf-8");
-    const s = JSON.parse(raw)?.toolSearch ?? {};
-    return {
-      alwaysEnabled: Array.isArray(s.alwaysEnabled)
-        ? s.alwaysEnabled.filter((n: unknown): n is string => typeof n === "string")
-        : [],
-      showToolSearchFooterStatus: s.showToolSearchFooterStatus !== false && s.showFooterStatus !== false && s.showStatus !== false,
-    };
+    const raw = readFileSync(path, "utf-8");
+    const parsed = JSON.parse(raw);
+    return isSettings(parsed) ? parsed : {};
   } catch {}
-  return { alwaysEnabled: [], showToolSearchFooterStatus: true };
+  return {};
+}
+
+function readSettings(cwd?: string): Settings {
+  const globalSettings = readSettingsFile(join(getAgentDir(), "settings.json"));
+  if (!cwd) return globalSettings;
+
+  const projectSettings = readSettingsFile(join(cwd, ".pi", "settings.json"));
+  return mergeSettings(globalSettings, projectSettings);
+}
+
+function readUserConfig(cwd?: string): UserConfig {
+  const settings = readSettings(cwd);
+  const s = isSettings(settings.toolSearch) ? settings.toolSearch : {};
+
+  return {
+    alwaysEnabled: Array.isArray(s.alwaysEnabled)
+      ? s.alwaysEnabled.filter((n: unknown): n is string => typeof n === "string")
+      : [],
+    isQuietStartup: settings.quietStartup === true,
+    showToolSearchFooterStatus: s.showToolSearchFooterStatus !== false && s.showFooterStatus !== false && s.showStatus !== false,
+  };
 }
 
 export default function toolSearchExtension(pi: ExtensionAPI) {
@@ -92,8 +131,8 @@ IMPORTANT: After calling tool_search, STOP and wait for the result. Do NOT call 
     return parts.join("\n\n");
   }
 
-  function refreshActiveTools(ctx?: { ui: { setStatus(id: string, content: string | undefined): void } }) {
-    showToolSearchFooterStatus = readUserConfig().showToolSearchFooterStatus;
+  function refreshActiveTools(ctx?: { cwd?: string; ui: { setStatus(id: string, content: string | undefined): void } }) {
+    showToolSearchFooterStatus = readUserConfig(ctx?.cwd).showToolSearchFooterStatus;
 
     buildManifest();
     registerToolSearch();
@@ -137,7 +176,7 @@ IMPORTANT: After calling tool_search, STOP and wait for the result. Do NOT call 
         }
 
         valid.forEach(n => unlocked.add(n));
-        refreshActiveTools();
+        refreshActiveTools(ctx);
 
         if (valid.length) {
           pi.sendMessage({
@@ -172,16 +211,18 @@ IMPORTANT: After calling tool_search, STOP and wait for the result. Do NOT call 
   pi.on("session_start", (_event, ctx) => {
     unlocked.clear();
 
-    const config = readUserConfig();
+    const config = readUserConfig(ctx.cwd);
     showToolSearchFooterStatus = config.showToolSearchFooterStatus;
     for (const name of [...CORE_TOOLS, ...config.alwaysEnabled]) unlocked.add(name);
 
     refreshActiveTools(ctx);
 
-    ctx.ui.notify(
-      `pi-tool-search: ${manifest.length} tools hidden behind tool_search`,
-      "info",
-    );
+    if (config.isQuietStartup === false) {
+      ctx.ui.notify(
+        `pi-tool-search: ${manifest.length} tools hidden behind tool_search`,
+        "info",
+      );
+    }
   });
 
   pi.on("turn_start", (_event, ctx) => {

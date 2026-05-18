@@ -69,6 +69,8 @@ Add a `toolSearch` block to `settings.json`:
 
 Unknown names in `alwaysEnabled` are silently ignored until they appear in manifest. `alwaysEnabled` is read at each `session_start`, so changes take effect on next session without reinstall. `showToolSearchFooterStatus` is re-read on refresh; set it to `false` to clear/hide the tool-search footer status.
 
+The startup notification is suppressed when Pi's top-level `quietStartup` setting is `true`. Global and project `.pi/settings.json` values are merged using Pi's normal project-overrides-global behavior.
+
 ## Same-response activation caveat
 
 If model emits `tool_search(...)` and newly enabled tool in same assistant response, second call can still fail because provider already received old tool schema for that response. Extension now mitigates this by:

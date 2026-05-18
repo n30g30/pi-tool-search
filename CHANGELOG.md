@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+- Respect Pi's `quietStartup` setting by suppressing the startup notification when quiet startup is enabled.
+
 ## [0.3.6] - 2026-04-24
 
 ### Bug Fixes
